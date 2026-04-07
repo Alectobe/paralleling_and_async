@@ -1,4 +1,6 @@
 aiohttp
 aiofiles
+beautifulsoup4
+lxml
 pytest
 pytest-asyncio

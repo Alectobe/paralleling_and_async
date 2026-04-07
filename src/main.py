@@ -5,7 +5,8 @@ from typing import Optional
 import aiohttp
 
 from src.models import FetchResult
-from src.utils import print_results, setup_logger
+from src.parser import HTMLParser
+from src.utils import print_parsed_summary, setup_logger, save_json_async
 
 
 logger = setup_logger()
@@ -13,19 +14,12 @@ logger = setup_logger()
 
 class AsyncCrawler:
     def __init__(self, max_concurrent: int = 10) -> None:
-        """
-        Инициализация краулера.
-
-        :param max_concurrent: максимальное количество одновременных запросов
-        """
         self.max_concurrent = max_concurrent
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.session: Optional[aiohttp.ClientSession] = None
+        self.parser = HTMLParser()
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        """
-        Создаёт HTTP-сессию при первом обращении.
-        """
         if self.session is None or self.session.closed:
             timeout = aiohttp.ClientTimeout(
                 total=15,
@@ -42,18 +36,12 @@ class AsyncCrawler:
             self.session = aiohttp.ClientSession(
                 timeout=timeout,
                 connector=connector,
-                headers={"User-Agent": "AsyncCrawler/1.0"}
+                headers={"User-Agent": "AsyncCrawler/2.0"}
             )
 
         return self.session
 
     async def fetch_url(self, url: str) -> FetchResult:
-        """
-        Загружает одну страницу.
-
-        :param url: URL страницы
-        :return: объект FetchResult
-        """
         async with self.semaphore:
             logger.info(f"▶️ Начало загрузки: {url}")
 
@@ -75,16 +63,16 @@ class AsyncCrawler:
                         status_code=response.status
                     )
 
-            except aiohttp.ClientResponseError as e:
+            except aiohttp.ClientResponseError as error:
                 logger.error(
-                    f"🚫 HTTP ошибка для {url} | status={e.status} | message={e.message}"
+                    f"🚫 HTTP ошибка для {url} | status={error.status} | message={error.message}"
                 )
                 return FetchResult(
                     url=url,
                     content=None,
                     success=False,
-                    error=f"HTTP error {e.status}: {e.message}",
-                    status_code=e.status
+                    error=f"HTTP error {error.status}: {error.message}",
+                    status_code=error.status
                 )
 
             except asyncio.TimeoutError:
@@ -96,102 +84,82 @@ class AsyncCrawler:
                     error="Timeout error"
                 )
 
-            except aiohttp.ClientError as e:
-                logger.error(f"❌ Сетевая ошибка для {url} | {type(e).__name__}: {e}")
+            except aiohttp.ClientError as error:
+                logger.error(f"❌ Сетевая ошибка для {url} | {type(error).__name__}: {error}")
                 return FetchResult(
                     url=url,
                     content=None,
                     success=False,
-                    error=f"Client error: {type(e).__name__}: {e}"
+                    error=f"Client error: {type(error).__name__}: {error}"
                 )
 
-            except Exception as e:
-                logger.error(f"⚠️ Неожиданная ошибка для {url} | {type(e).__name__}: {e}")
+            except Exception as error:
+                logger.error(f"⚠️ Неожиданная ошибка для {url} | {type(error).__name__}: {error}")
                 return FetchResult(
                     url=url,
                     content=None,
                     success=False,
-                    error=f"Unexpected error: {type(e).__name__}: {e}"
+                    error=f"Unexpected error: {type(error).__name__}: {error}"
                 )
 
     async def fetch_urls(self, urls: list[str]) -> list[FetchResult]:
-        """
-        Параллельно загружает список URL.
-
-        :param urls: список URL
-        :return: список результатов
-        """
         tasks = [self.fetch_url(url) for url in urls]
-        results = await asyncio.gather(*tasks)
-        return results
+        return await asyncio.gather(*tasks)
+
+    async def fetch_and_parse(self, url: str) -> dict:
+        """
+        Загружает страницу и сразу парсит HTML.
+        """
+        fetch_result = await self.fetch_url(url)
+
+        if not fetch_result.success or fetch_result.content is None:
+            return {
+                "url": url,
+                "title": "",
+                "text": "",
+                "links": [],
+                "metadata": {},
+                "images": [],
+                "headings": {"h1": [], "h2": [], "h3": []},
+                "tables": [],
+                "lists": [],
+                "error": fetch_result.error,
+            }
+
+        return await self.parser.parse_html(fetch_result.content, url)
+
+    async def fetch_and_parse_many(self, urls: list[str]) -> list[dict]:
+        tasks = [self.fetch_and_parse(url) for url in urls]
+        return await asyncio.gather(*tasks)
 
     async def close(self) -> None:
-        """
-        Закрывает HTTP-сессию.
-        """
         if self.session is not None and not self.session.closed:
             await self.session.close()
             logger.info("🔒 HTTP-сессия закрыта")
 
 
-async def fetch_urls_sequential(urls: list[str]) -> list[FetchResult]:
-    """
-    Последовательная загрузка URL для сравнения.
-    """
-    crawler = AsyncCrawler(max_concurrent=1)
-    results: list[FetchResult] = []
-
-    try:
-        for url in urls:
-            result = await crawler.fetch_url(url)
-            results.append(result)
-    finally:
-        await crawler.close()
-
-    return results
-
-
-async def fetch_urls_parallel(urls: list[str], max_concurrent: int = 5) -> list[FetchResult]:
-    """
-    Параллельная загрузка URL.
-    """
-    crawler = AsyncCrawler(max_concurrent=max_concurrent)
-
-    try:
-        results = await crawler.fetch_urls(urls)
-        return results
-    finally:
-        await crawler.close()
-
-
 async def main() -> None:
     urls = [
         "https://example.com",
-        "https://httpbin.org/delay/1",
-        "https://httpbin.org/delay/2",
         "https://httpbin.org/html",
-        "https://httpbin.org/status/404",
-        "https://this-domain-does-not-exist-123456789.com"
+        "https://www.python.org",
     ]
 
-    print("=== Последовательная загрузка ===")
-    start = time.perf_counter()
-    sequential_results = await fetch_urls_sequential(urls)
-    sequential_time = time.perf_counter() - start
-    print_results(sequential_results)
-    print(f"\nВремя последовательной загрузки: {sequential_time:.2f} сек")
+    crawler = AsyncCrawler(max_concurrent=5)
 
-    print("\n" + "=" * 60 + "\n")
+    try:
+        start = time.perf_counter()
+        parsed_pages = await crawler.fetch_and_parse_many(urls)
+        total_time = time.perf_counter() - start
 
-    print("=== Параллельная загрузка ===")
-    start = time.perf_counter()
-    parallel_results = await fetch_urls_parallel(urls, max_concurrent=5)
-    parallel_time = time.perf_counter() - start
-    print_results(parallel_results)
-    print(f"\nВремя параллельной загрузки: {parallel_time:.2f} сек")
+        print_parsed_summary(parsed_pages)
+        await save_json_async(parsed_pages, "parsed_results.json")
 
-    if parallel_time > 0:
-        print(f"\nУскорение: {sequential_time / parallel_time:.2f}x")
+        print(f"\n⏱️ Общее время: {total_time:.2f} сек")
+        print("💾 Результаты сохранены в parsed_results.json")
+
+    finally:
+        await crawler.close()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,50 @@
+[
+    {
+        "url": "https://example.com",
+        "title": "",
+        "text": "",
+        "links": [],
+        "metadata": {},
+        "images": [],
+        "headings": {
+            "h1": [],
+            "h2": [],
+            "h3": []
+        },
+        "tables": [],
+        "lists": [],
+        "error": "FeatureNotFound: Couldn't find a tree builder with the features you requested: lxml. Do you need to install a parser library?"
+    },
+    {
+        "url": "https://httpbin.org/html",
+        "title": "",
+        "text": "",
+        "links": [],
+        "metadata": {},
+        "images": [],
+        "headings": {
+            "h1": [],
+            "h2": [],
+            "h3": []
+        },
+        "tables": [],
+        "lists": [],
+        "error": "FeatureNotFound: Couldn't find a tree builder with the features you requested: lxml. Do you need to install a parser library?"
+    },
+    {
+        "url": "https://www.python.org",
+        "title": "",
+        "text": "",
+        "links": [],
+        "metadata": {},
+        "images": [],
+        "headings": {
+            "h1": [],
+            "h2": [],
+            "h3": []
+        },
+        "tables": [],
+        "lists": [],
+        "error": "FeatureNotFound: Couldn't find a tree builder with the features you requested: lxml. Do you need to install a parser library?"
+    }
+]

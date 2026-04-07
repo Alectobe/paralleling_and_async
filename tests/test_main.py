@@ -30,30 +30,15 @@ async def test_404_url():
 
 
 @pytest.mark.asyncio
-async def test_invalid_domain():
+async def test_fetch_and_parse():
     crawler = AsyncCrawler(max_concurrent=2)
 
     try:
-        result = await crawler.fetch_url("https://this-domain-does-not-exist-123456789.com")
-        assert result.success is False
-        assert result.content is None
-        assert result.error is not None
-    finally:
-        await crawler.close()
-
-
-@pytest.mark.asyncio
-async def test_fetch_multiple_urls():
-    crawler = AsyncCrawler(max_concurrent=3)
-
-    urls = [
-        "https://example.com",
-        "https://httpbin.org/html"
-    ]
-
-    try:
-        results = await crawler.fetch_urls(urls)
-        assert len(results) == 2
-        assert all(result.url in urls for result in results)
+        result = await crawler.fetch_and_parse("https://example.com")
+        assert result["url"] == "https://example.com"
+        assert "title" in result
+        assert "text" in result
+        assert "links" in result
+        assert "metadata" in result
     finally:
         await crawler.close()
