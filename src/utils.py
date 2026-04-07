@@ -47,6 +47,12 @@ async def save_json_async(data: list, file_path: str) -> None:
         await file.write(json_text)
 
 
+async def save_dict_json_async(data: dict, file_path: str) -> None:
+    async with aiofiles.open(file_path, "w", encoding="utf-8") as file:
+        json_text = json.dumps(data, ensure_ascii=False, indent=4)
+        await file.write(json_text)
+
+
 def normalize_url(url: str) -> str:
     parsed = urlparse(url)
     path = parsed.path.rstrip("/")

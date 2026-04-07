@@ -1,0 +1,27 @@
+{
+    "total_request_attempts": 11,
+    "failed_urls_count": 3,
+    "permanent_error_urls_count": 1,
+    "permanent_error_urls": {
+        "https://httpbin.org/status/404": "HTTP 404: NOT FOUND"
+    },
+    "failed_urls": {
+        "https://httpbin.org/status/404": "HTTP 404: NOT FOUND",
+        "https://httpbin.org/status/429": "HTTP 429: TOO MANY REQUESTS",
+        "https://httpbin.org/status/503": "HTTP 503: SERVICE UNAVAILABLE"
+    },
+    "retry_stats": {
+        "total_retries": 6,
+        "successful_retries": 0,
+        "average_retry_delay": 1.1666666666666667,
+        "errors_by_type": {
+            "TransientError": 8,
+            "PermanentError": 1
+        }
+    },
+    "domain_error_counts": {
+        "example.com": 0,
+        "iana.org": 0
+    },
+    "open_circuits": {}
+}

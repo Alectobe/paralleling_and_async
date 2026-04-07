@@ -6,10 +6,19 @@ from urllib.parse import urlparse
 
 import aiohttp
 
+from src.errors import (
+    CircuitBreakerOpenError,
+    NetworkError,
+    ParseError,
+    PermanentError,
+    RobotsBlockedError,
+    TransientError,
+)
 from src.models import FetchResult
 from src.parser import HTMLParser
 from src.queue_manager import CrawlerQueue
 from src.rate_limiter import RateLimiter
+from src.retry_strategy import RetryStrategy
 from src.robots_parser import RobotsParser
 from src.semaphore_manager import SemaphoreManager
 from src.utils import (
@@ -17,6 +26,7 @@ from src.utils import (
     get_domain,
     normalize_url,
     print_crawl_progress,
+    save_dict_json_async,
     save_json_async,
     setup_logger,
 )
@@ -35,10 +45,16 @@ class AsyncCrawler:
         respect_robots: bool = True,
         min_delay: float = 0.0,
         jitter: float = 0.0,
-        user_agent: str = "AsyncCrawler/4.0",
+        user_agent: str = "AsyncCrawler/5.0",
         user_agents: Optional[list] = None,
-        max_retries: int = 2,
-        backoff_base: float = 0.5
+        max_retries: int = 3,
+        backoff_base: float = 0.5,
+        timeout_connect: float = 5.0,
+        timeout_read: float = 15.0,
+        timeout_total: float = 20.0,
+        circuit_breaker_enabled: bool = True,
+        circuit_breaker_threshold: int = 5,
+        circuit_breaker_timeout: float = 30.0
     ) -> None:
         self.max_concurrent = max_concurrent
         self.max_depth = max_depth
@@ -48,8 +64,15 @@ class AsyncCrawler:
         self.jitter = jitter
         self.user_agent = user_agent
         self.user_agents = user_agents or [user_agent]
-        self.max_retries = max_retries
         self.backoff_base = backoff_base
+
+        self.timeout_connect = timeout_connect
+        self.timeout_read = timeout_read
+        self.timeout_total = timeout_total
+
+        self.circuit_breaker_enabled = circuit_breaker_enabled
+        self.circuit_breaker_threshold = circuit_breaker_threshold
+        self.circuit_breaker_timeout = circuit_breaker_timeout
 
         self.session: Optional[aiohttp.ClientSession] = None
         self.parser = HTMLParser()
@@ -64,6 +87,27 @@ class AsyncCrawler:
         )
         self.robots_parser = RobotsParser()
 
+        self.retry_strategy = RetryStrategy(
+            max_retries=max_retries,
+            backoff_factor=2.0,
+            retry_on=[TransientError, NetworkError, CircuitBreakerOpenError],
+            base_delay=backoff_base,
+            max_delay=30.0,
+            type_limits={
+                "TransientError": max_retries,
+                "NetworkError": max_retries,
+                "PermanentError": 0,
+                "ParseError": 0,
+                "RobotsBlockedError": 0,
+                "CircuitBreakerOpenError": max_retries,
+            },
+            type_backoff={
+                "TransientError": 2.0,
+                "NetworkError": 2.0,
+                "CircuitBreakerOpenError": 1.5,
+            }
+        )
+
         self.visited_urls = set()
         self.failed_urls = {}
         self.processed_urls = {}
@@ -72,16 +116,29 @@ class AsyncCrawler:
         self.delay_history = []
         self.robots_blocked_count = 0
         self.total_request_attempts = 0
+        self.permanent_error_urls = {}
+
+        self.domain_error_counts = {}
+        self.domain_open_until = {}
 
     def _get_random_user_agent(self) -> str:
         return random.choice(self.user_agents)
 
+    def _get_timeout_for_attempt(self, attempt: int) -> aiohttp.ClientTimeout:
+        multiplier = 1 + max(0, attempt - 1) * 0.5
+
+        return aiohttp.ClientTimeout(
+            total=self.timeout_total * multiplier,
+            connect=self.timeout_connect * multiplier,
+            sock_read=self.timeout_read * multiplier
+        )
+
     async def _get_session(self) -> aiohttp.ClientSession:
         if self.session is None or self.session.closed:
             timeout = aiohttp.ClientTimeout(
-                total=20,
-                connect=5,
-                sock_read=15
+                total=self.timeout_total,
+                connect=self.timeout_connect,
+                sock_read=self.timeout_read
             )
 
             connector = aiohttp.TCPConnector(
@@ -110,8 +167,56 @@ class AsyncCrawler:
             return 0.0
         return self.total_request_attempts / elapsed
 
-    async def _apply_politeness_rules(self, url: str, current_user_agent: str) -> Optional[str]:
+    def _is_circuit_open(self, domain: str) -> bool:
+        if not self.circuit_breaker_enabled:
+            return False
+
+        open_until = self.domain_open_until.get(domain)
+        if open_until is None:
+            return False
+
+        if time.perf_counter() >= open_until:
+            self.domain_open_until.pop(domain, None)
+            self.domain_error_counts[domain] = 0
+            return False
+
+        return True
+
+    def _register_domain_failure(self, domain: str) -> None:
+        if not self.circuit_breaker_enabled:
+            return
+
+        count = self.domain_error_counts.get(domain, 0) + 1
+        self.domain_error_counts[domain] = count
+
+        if count >= self.circuit_breaker_threshold:
+            self.domain_open_until[domain] = time.perf_counter() + self.circuit_breaker_timeout
+            logger.warning(f"🚫 Circuit breaker открыт для домена {domain}")
+
+    def _register_domain_success(self, domain: str) -> None:
+        self.domain_error_counts[domain] = 0
+        self.domain_open_until.pop(domain, None)
+
+    def _classify_http_error(self, status: int, url: str, message: str) -> Exception:
+        if status in (401, 403, 404):
+            return PermanentError(f"HTTP {status}: {message}", url=url)
+
+        if status in (429, 500, 502, 503, 504):
+            return TransientError(f"HTTP {status}: {message}", url=url)
+
+        if 400 <= status < 500:
+            return PermanentError(f"HTTP {status}: {message}", url=url)
+
+        if status >= 500:
+            return TransientError(f"HTTP {status}: {message}", url=url)
+
+        return TransientError(f"HTTP {status}: {message}", url=url)
+
+    async def _apply_politeness_rules(self, url: str, current_user_agent: str) -> None:
         domain = get_domain(url)
+
+        if self._is_circuit_open(domain):
+            raise CircuitBreakerOpenError(f"Circuit breaker open for {domain}", url=url)
 
         if self.respect_robots:
             await self.robots_parser.fetch_robots(url)
@@ -119,7 +224,7 @@ class AsyncCrawler:
             if not self.robots_parser.can_fetch(url, current_user_agent):
                 self.robots_blocked_count += 1
                 logger.warning(f"🚫 URL заблокирован robots.txt: {url}")
-                return "Blocked by robots.txt"
+                raise RobotsBlockedError("Blocked by robots.txt", url=url)
 
             robots_delay = self.robots_parser.get_crawl_delay(url, current_user_agent)
         else:
@@ -135,115 +240,115 @@ class AsyncCrawler:
             self.delay_history.append(extra_delay)
             await asyncio.sleep(extra_delay)
 
-        return None
-
-    async def fetch_url(self, url: str) -> FetchResult:
+    async def _single_fetch_attempt(self, url: str, attempt: int = 1) -> FetchResult:
         current_user_agent = self._get_random_user_agent()
+        domain = get_domain(url)
 
-        blocked_reason = await self._apply_politeness_rules(url, current_user_agent)
-        if blocked_reason is not None:
-            return FetchResult(
-                url=url,
-                content=None,
-                success=False,
-                error=blocked_reason
-            )
-
+        await self._apply_politeness_rules(url, current_user_agent)
         await self.semaphore_manager.acquire(url)
+
         try:
             session = await self._get_session()
+            timeout = self._get_timeout_for_attempt(attempt)
 
-            for attempt in range(self.max_retries + 1):
-                self.total_request_attempts += 1
-                self.request_timestamps.append(time.perf_counter())
+            self.total_request_attempts += 1
+            self.request_timestamps.append(time.perf_counter())
 
-                logger.info(f"▶️ Начало загрузки: {url} | attempt={attempt + 1}")
+            logger.info(f"▶️ Начало загрузки: {url} | attempt={attempt}")
 
-                try:
-                    async with session.get(
-                        url,
-                        headers={"User-Agent": current_user_agent}
-                    ) as response:
-                        response.raise_for_status()
-                        text = await response.text()
-
-                        logger.info(
-                            f"✅ Успешно загружено: {url} | status={response.status} | bytes={len(text)}"
-                        )
-
-                        return FetchResult(
+            try:
+                async with session.get(
+                    url,
+                    headers={"User-Agent": current_user_agent},
+                    timeout=timeout
+                ) as response:
+                    if response.status >= 400:
+                        raise self._classify_http_error(
+                            status=response.status,
                             url=url,
-                            content=text,
-                            success=True,
-                            status_code=response.status
+                            message=response.reason
                         )
 
-                except aiohttp.ClientResponseError as error:
-                    logger.error(
-                        f"🚫 HTTP ошибка для {url} | status={error.status} | message={error.message}"
-                    )
+                    text = await response.text()
+                    self._register_domain_success(domain)
 
-                    retryable = error.status >= 500
-                    if retryable and attempt < self.max_retries:
-                        backoff_delay = self.backoff_base * (2 ** attempt)
-                        await asyncio.sleep(backoff_delay)
-                        continue
+                    logger.info(
+                        f"✅ Успешно загружено: {url} | status={response.status} | bytes={len(text)}"
+                    )
 
                     return FetchResult(
                         url=url,
-                        content=None,
-                        success=False,
-                        error=f"HTTP error {error.status}: {error.message}",
-                        status_code=error.status
+                        content=text,
+                        success=True,
+                        status_code=response.status
                     )
 
-                except asyncio.TimeoutError:
-                    logger.error(f"⏰ Таймаут при загрузке: {url}")
+            except asyncio.TimeoutError:
+                self._register_domain_failure(domain)
+                raise TransientError("Timeout error", url=url)
 
-                    if attempt < self.max_retries:
-                        backoff_delay = self.backoff_base * (2 ** attempt)
-                        await asyncio.sleep(backoff_delay)
-                        continue
+            except aiohttp.ClientConnectorError as error:
+                self._register_domain_failure(domain)
+                raise NetworkError(f"ClientConnectorError: {error}", url=url)
 
-                    return FetchResult(
-                        url=url,
-                        content=None,
-                        success=False,
-                        error="Timeout error"
-                    )
+            except aiohttp.ClientOSError as error:
+                self._register_domain_failure(domain)
+                raise NetworkError(f"ClientOSError: {error}", url=url)
 
-                except aiohttp.ClientError as error:
-                    logger.error(f"❌ Сетевая ошибка для {url} | {type(error).__name__}: {error}")
+            except aiohttp.ClientError as error:
+                self._register_domain_failure(domain)
+                raise NetworkError(f"ClientError: {error}", url=url)
 
-                    if attempt < self.max_retries:
-                        backoff_delay = self.backoff_base * (2 ** attempt)
-                        await asyncio.sleep(backoff_delay)
-                        continue
+        finally:
+            await self.semaphore_manager.release(url)
 
-                    return FetchResult(
-                        url=url,
-                        content=None,
-                        success=False,
-                        error=f"Client error: {type(error).__name__}: {error}"
-                    )
+    async def fetch_url(self, url: str) -> FetchResult:
+        attempt_holder = {"attempt": 0}
 
-                except Exception as error:
-                    logger.error(f"⚠️ Неожиданная ошибка для {url} | {type(error).__name__}: {error}")
-                    return FetchResult(
-                        url=url,
-                        content=None,
-                        success=False,
-                        error=f"Unexpected error: {type(error).__name__}: {error}"
-                    )
+        async def wrapped_fetch():
+            attempt_holder["attempt"] += 1
+            return await self._single_fetch_attempt(url, attempt=attempt_holder["attempt"])
 
+        try:
+            return await self.retry_strategy.execute_with_retry(wrapped_fetch)
+
+        except PermanentError as error:
+            logger.error(f"❌ Постоянная ошибка | url={url} | error={error}")
+            self.permanent_error_urls[url] = str(error)
             return FetchResult(
                 url=url,
                 content=None,
                 success=False,
-                error="Unknown fetch error"
+                error=str(error)
             )
-        finally:
-            await self.semaphore_manager.release(url)
+
+        except RobotsBlockedError as error:
+            logger.error(f"❌ robots blocked | url={url} | error={error}")
+            self.permanent_error_urls[url] = str(error)
+            return FetchResult(
+                url=url,
+                content=None,
+                success=False,
+                error=str(error)
+            )
+
+        except ParseError as error:
+            logger.error(f"❌ Ошибка парсинга | url={url} | error={error}")
+            return FetchResult(
+                url=url,
+                content=None,
+                success=False,
+                error=str(error)
+            )
+
+        except Exception as error:
+            logger.error(f"❌ Временная/сетевая ошибка после всех повторов | url={url} | error={error}")
+            return FetchResult(
+                url=url,
+                content=None,
+                success=False,
+                error=str(error)
+            )
 
     async def fetch_and_parse(self, url: str) -> dict:
         fetch_result = await self.fetch_url(url)
@@ -262,7 +367,10 @@ class AsyncCrawler:
                 "error": fetch_result.error,
             }
 
-        return await self.parser.parse_html(fetch_result.content, url)
+        try:
+            return await self.parser.parse_html(fetch_result.content, url)
+        except Exception as error:
+            raise ParseError(f"{type(error).__name__}: {error}", url=url)
 
     def _should_visit_url(
         self,
@@ -317,7 +425,6 @@ class AsyncCrawler:
             return
 
         self.visited_urls.add(url)
-
         parsed_result = await self.fetch_and_parse(url)
 
         if parsed_result.get("error"):
@@ -416,6 +523,23 @@ class AsyncCrawler:
         print()
         return list(self.processed_urls.values())
 
+    def get_error_stats(self) -> dict:
+        retry_stats = self.retry_strategy.get_stats()
+
+        return {
+            "total_request_attempts": self.total_request_attempts,
+            "failed_urls_count": len(self.failed_urls),
+            "permanent_error_urls_count": len(self.permanent_error_urls),
+            "permanent_error_urls": dict(self.permanent_error_urls),
+            "failed_urls": dict(self.failed_urls),
+            "retry_stats": retry_stats,
+            "domain_error_counts": dict(self.domain_error_counts),
+            "open_circuits": {
+                domain: until
+                for domain, until in self.domain_open_until.items()
+            },
+        }
+
     def get_politeness_stats(self) -> dict:
         return {
             "requests_per_second_config": self.requests_per_second,
@@ -435,30 +559,45 @@ class AsyncCrawler:
 async def main() -> None:
     crawler = AsyncCrawler(
         max_concurrent=5,
-        max_depth=2,
+        max_depth=1,
         per_domain_limit=2,
         requests_per_second=2.0,
         respect_robots=True,
-        min_delay=0.5,
-        jitter=0.2,
-        user_agent="MyBot/1.0"
+        min_delay=0.3,
+        jitter=0.1,
+        user_agent="MyBot/1.0",
+        max_retries=3,
+        backoff_base=0.5,
+        timeout_connect=3.0,
+        timeout_read=5.0,
+        timeout_total=8.0,
+        circuit_breaker_enabled=True,
+        circuit_breaker_threshold=3,
+        circuit_breaker_timeout=15.0
     )
 
     try:
         results = await crawler.crawl(
-            start_urls=["https://example.com"],
-            max_pages=20,
-            same_domain_only=True,
+            start_urls=[
+                "https://example.com",
+                "https://httpbin.org/status/503",
+                "https://httpbin.org/status/404",
+                "https://httpbin.org/status/429",
+            ],
+            max_pages=10,
+            same_domain_only=False,
             include_patterns=None,
             exclude_patterns=["#", "mailto:", "tel:"]
         )
 
-        await save_json_async(results, "crawl_results_day4.json")
+        await save_json_async(results, "crawl_results_day5.json")
+        await save_dict_json_async(crawler.get_error_stats(), "error_report_day5.json")
 
         print(f"Обработано: {len(results)} страниц")
-        print("Результаты сохранены в crawl_results_day4.json")
-        print("Статистика вежливости:")
-        print(crawler.get_politeness_stats())
+        print("Результаты сохранены в crawl_results_day5.json")
+        print("Отчёт об ошибках сохранён в error_report_day5.json")
+        print("Статистика ошибок:")
+        print(crawler.get_error_stats())
 
     finally:
         await crawler.close()

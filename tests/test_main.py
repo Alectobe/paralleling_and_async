@@ -18,13 +18,13 @@ async def test_valid_url():
 
 @pytest.mark.asyncio
 async def test_404_url():
-    crawler = AsyncCrawler(max_concurrent=2, respect_robots=False)
+    crawler = AsyncCrawler(max_concurrent=2, respect_robots=False, max_retries=2)
 
     try:
         result = await crawler.fetch_url("https://httpbin.org/status/404")
         assert result.success is False
         assert result.content is None
-        assert result.status_code == 404
+        assert "404" in result.error
     finally:
         await crawler.close()
 

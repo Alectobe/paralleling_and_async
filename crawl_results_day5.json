@@ -1,0 +1,159 @@
+[
+    {
+        "url": "https://example.com",
+        "title": "Example Domain",
+        "text": "Example Domain Example Domain This domain is for use in documentation examples without needing permission. Avoid use in operations. Learn more",
+        "links": [
+            "https://iana.org/domains/example"
+        ],
+        "metadata": {
+            "title": "Example Domain",
+            "description": "",
+            "keywords": "",
+            "meta_tags": {
+                "viewport": "width=device-width, initial-scale=1"
+            }
+        },
+        "images": [],
+        "headings": {
+            "h1": [
+                "Example Domain"
+            ],
+            "h2": [],
+            "h3": []
+        },
+        "tables": [],
+        "lists": [],
+        "error": null
+    },
+    {
+        "url": "https://iana.org/domains/example",
+        "title": "Example Domains",
+        "text": "Example Domains Domains Protocols Numbers About Example Domains As described in RFC 2606 and RFC 6761, a number of domains such as example.com and example.org are maintained for documentation purposes. These domains may be used as illustrative examples in documents without prior coordination with us. They are not available for registration or transfer. We provide a web service on the example domain hosts to provide basic information on the purpose of the domain. These web services are provided as best effort, but are not designed to support production applications. While incidental traffic for incorrectly configured applications is expected, please do not design applications that require the example domains to have operating HTTP service. Further Reading IANA-managed Reserved Domains Last revised 2017-05-13. Domain Names Root Zone Registry.INT Registry.ARPA Registry IDN Repository Number Resources Abuse Information Protocols Protocol Registries Time Zone Database About Us News Performance Excellence Archive Contact Us The IANA functions coordinate the Internet’s globally unique identifiers, and are provided by Public Technical Identifiers, an affiliate of ICANN. Privacy Policy Terms of Service",
+        "links": [
+            "https://iana.org/",
+            "https://iana.org/domains",
+            "https://iana.org/protocols",
+            "https://iana.org/numbers",
+            "https://iana.org/about",
+            "https://iana.org/go/rfc2606",
+            "https://iana.org/go/rfc6761",
+            "https://iana.org/domains/reserved",
+            "https://iana.org/domains/root",
+            "https://iana.org/domains/int",
+            "https://iana.org/domains/arpa",
+            "https://iana.org/domains/idn-tables",
+            "https://iana.org/abuse",
+            "https://iana.org/time-zones",
+            "https://iana.org/news",
+            "https://iana.org/performance",
+            "https://iana.org/about/excellence",
+            "https://iana.org/archive",
+            "https://iana.org/contact",
+            "https://pti.icann.org",
+            "https://www.icann.org/",
+            "https://www.icann.org/privacy/policy",
+            "https://www.icann.org/privacy/tos"
+        ],
+        "metadata": {
+            "title": "Example Domains",
+            "description": "",
+            "keywords": "",
+            "meta_tags": {
+                "viewport": "width=device-width, initial-scale=1"
+            }
+        },
+        "images": [
+            {
+                "src": "https://iana.org/static/_img/2025.01/iana-logo-header.svg",
+                "alt": "Homepage"
+            }
+        ],
+        "headings": {
+            "h1": [
+                "Example Domains"
+            ],
+            "h2": [
+                "Further Reading"
+            ],
+            "h3": []
+        },
+        "tables": [
+            [
+                [
+                    "Domain Names",
+                    "Root Zone Registry .INT Registry .ARPA Registry IDN Repository"
+                ],
+                [
+                    "Number Resources",
+                    "Abuse Information"
+                ],
+                [
+                    "Protocols",
+                    "Protocol Registries Time Zone Database"
+                ],
+                [
+                    "About Us",
+                    "News Performance Excellence Archive Contact Us"
+                ]
+            ]
+        ],
+        "lists": [
+            {
+                "type": "ul",
+                "items": [
+                    "Domains",
+                    "Protocols",
+                    "Numbers",
+                    "About"
+                ]
+            },
+            {
+                "type": "ul",
+                "items": [
+                    "IANA-managed Reserved Domains"
+                ]
+            },
+            {
+                "type": "ul",
+                "items": [
+                    "Root Zone Registry",
+                    ".INT Registry",
+                    ".ARPA Registry",
+                    "IDN Repository"
+                ]
+            },
+            {
+                "type": "ul",
+                "items": [
+                    "Abuse Information"
+                ]
+            },
+            {
+                "type": "ul",
+                "items": [
+                    "Protocol Registries",
+                    "Time Zone Database"
+                ]
+            },
+            {
+                "type": "ul",
+                "items": [
+                    "News",
+                    "Performance",
+                    "Excellence",
+                    "Archive",
+                    "Contact Us"
+                ]
+            },
+            {
+                "type": "ul",
+                "items": [
+                    "Privacy Policy",
+                    "Terms of Service"
+                ]
+            }
+        ],
+        "error": null
+    }
+]
