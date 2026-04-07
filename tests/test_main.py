@@ -42,3 +42,59 @@ async def test_fetch_and_parse():
         assert "metadata" in result
     finally:
         await crawler.close()
+
+
+def test_should_visit_url_same_domain():
+    crawler = AsyncCrawler(max_concurrent=2, max_depth=2)
+
+    result = crawler._should_visit_url(
+        url="https://example.com/page",
+        source_domain="example.com",
+        same_domain_only=True,
+        include_patterns=None,
+        exclude_patterns=None
+    )
+
+    assert result is True
+
+
+def test_should_visit_url_other_domain_blocked():
+    crawler = AsyncCrawler(max_concurrent=2, max_depth=2)
+
+    result = crawler._should_visit_url(
+        url="https://other.com/page",
+        source_domain="example.com",
+        same_domain_only=True,
+        include_patterns=None,
+        exclude_patterns=None
+    )
+
+    assert result is False
+
+
+def test_should_visit_url_include_pattern():
+    crawler = AsyncCrawler(max_concurrent=2, max_depth=2)
+
+    result = crawler._should_visit_url(
+        url="https://example.com/blog/post-1",
+        source_domain="example.com",
+        same_domain_only=True,
+        include_patterns=["/blog/"],
+        exclude_patterns=None
+    )
+
+    assert result is True
+
+
+def test_should_visit_url_exclude_pattern():
+    crawler = AsyncCrawler(max_concurrent=2, max_depth=2)
+
+    result = crawler._should_visit_url(
+        url="https://example.com/logout",
+        source_domain="example.com",
+        same_domain_only=True,
+        include_patterns=None,
+        exclude_patterns=["logout"]
+    )
+
+    assert result is False

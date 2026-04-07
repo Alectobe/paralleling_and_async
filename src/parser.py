@@ -12,9 +12,6 @@ logger = setup_logger()
 
 class HTMLParser:
     async def parse_html(self, html: str, url: str) -> dict:
-        """
-        Парсит HTML и возвращает структурированные данные.
-        """
         page = ParsedPage(url=url)
 
         try:
@@ -47,9 +44,6 @@ class HTMLParser:
         }
 
     def extract_links(self, soup: BeautifulSoup, base_url: str) -> list[str]:
-        """
-        Извлекает ссылки и преобразует относительные ссылки в абсолютные.
-        """
         links = []
         seen = set()
 
@@ -68,9 +62,6 @@ class HTMLParser:
         return links
 
     def extract_text(self, soup: BeautifulSoup, selector: str = None) -> str:
-        """
-        Извлекает текст либо со всей страницы, либо по CSS-селектору.
-        """
         try:
             if selector:
                 elements = soup.select(selector)
@@ -84,9 +75,6 @@ class HTMLParser:
                 text = soup_copy.get_text(separator=" ", strip=True)
 
             text = " ".join(text.split())
-
-            # Убираем пробелы перед знаками препинания:
-            # "world !" -> "world!"
             text = re.sub(r"\s+([.,!?;:])", r"\1", text)
 
             return text
@@ -95,9 +83,6 @@ class HTMLParser:
             return ""
 
     def extract_metadata(self, soup: BeautifulSoup) -> dict:
-        """
-        Извлекает title, description, keywords и все найденные meta[name]/meta[property].
-        """
         metadata = {
             "title": self._extract_title(soup),
             "description": "",
@@ -127,9 +112,6 @@ class HTMLParser:
         return metadata
 
     def extract_images(self, soup: BeautifulSoup, base_url: str) -> list[dict]:
-        """
-        Извлекает все изображения.
-        """
         images = []
 
         for tag in soup.find_all("img"):
@@ -150,9 +132,6 @@ class HTMLParser:
         return images
 
     def extract_headings(self, soup: BeautifulSoup) -> dict:
-        """
-        Извлекает h1, h2, h3.
-        """
         return {
             "h1": [tag.get_text(" ", strip=True) for tag in soup.find_all("h1")],
             "h2": [tag.get_text(" ", strip=True) for tag in soup.find_all("h2")],
@@ -160,9 +139,6 @@ class HTMLParser:
         }
 
     def extract_tables(self, soup: BeautifulSoup) -> list[list[list[str]]]:
-        """
-        Извлекает таблицы.
-        """
         tables = []
 
         for table in soup.find_all("table"):
@@ -181,9 +157,6 @@ class HTMLParser:
         return tables
 
     def extract_lists(self, soup: BeautifulSoup) -> list[dict]:
-        """
-        Извлекает ul и ol.
-        """
         results = []
 
         for ul in soup.find_all("ul"):

@@ -1,6 +1,8 @@
 import json
 import logging
+import time
 from typing import Iterable
+from urllib.parse import urlparse
 
 import aiofiles
 
@@ -43,3 +45,48 @@ async def save_json_async(data: list[dict], file_path: str) -> None:
     async with aiofiles.open(file_path, "w", encoding="utf-8") as file:
         json_text = json.dumps(data, ensure_ascii=False, indent=4)
         await file.write(json_text)
+
+
+def normalize_url(url: str) -> str:
+    """
+    Упрощённая нормализация URL:
+    - убираем завершающий /
+    - сохраняем схему, домен, путь и query
+    """
+    parsed = urlparse(url)
+    path = parsed.path.rstrip("/")
+    normalized = f"{parsed.scheme}://{parsed.netloc}{path}"
+
+    if parsed.query:
+        normalized += f"?{parsed.query}"
+
+    return normalized
+
+
+def get_domain(url: str) -> str:
+    return urlparse(url).netloc.lower()
+
+
+def calculate_speed(start_time: float, processed_count: int) -> float:
+    elapsed = time.perf_counter() - start_time
+    if elapsed <= 0:
+        return 0.0
+    return processed_count / elapsed
+
+
+def print_crawl_progress(
+    processed: int,
+    queued: int,
+    failed: int,
+    active: int,
+    speed: float
+) -> None:
+    print(
+        f"\rОбработано: {processed} | "
+        f"В очереди: {queued} | "
+        f"Ошибок: {failed} | "
+        f"Активных: {active} | "
+        f"Скорость: {speed:.2f} стр/сек",
+        end="",
+        flush=True
+    )

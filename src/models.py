@@ -27,3 +27,18 @@ class ParsedPage:
     tables: list[list[list[str]]] = field(default_factory=list)
     lists: list[dict] = field(default_factory=list)
     error: Optional[str] = None
+
+
+@dataclass(order=True)
+class QueueItem:
+    priority: int
+    depth: int
+    url: str = field(compare=False)
+
+
+@dataclass
+class CrawlStats:
+    processed: int = 0
+    failed: int = 0
+    queued: int = 0
+    active: int = 0
