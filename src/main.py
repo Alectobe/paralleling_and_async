@@ -1,6 +1,7 @@
 import asyncio
 import random
 import time
+from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -21,13 +22,13 @@ from src.rate_limiter import RateLimiter
 from src.retry_strategy import RetryStrategy
 from src.robots_parser import RobotsParser
 from src.semaphore_manager import SemaphoreManager
+from src.storage import CSVStorage, JSONStorage, SQLiteStorage
 from src.utils import (
     calculate_speed,
     get_domain,
     normalize_url,
     print_crawl_progress,
     save_dict_json_async,
-    save_json_async,
     setup_logger,
 )
 
@@ -45,7 +46,7 @@ class AsyncCrawler:
         respect_robots: bool = True,
         min_delay: float = 0.0,
         jitter: float = 0.0,
-        user_agent: str = "AsyncCrawler/5.0",
+        user_agent: str = "AsyncCrawler/6.0",
         user_agents: Optional[list] = None,
         max_retries: int = 3,
         backoff_base: float = 0.5,
@@ -54,7 +55,8 @@ class AsyncCrawler:
         timeout_total: float = 20.0,
         circuit_breaker_enabled: bool = True,
         circuit_breaker_threshold: int = 5,
-        circuit_breaker_timeout: float = 30.0
+        circuit_breaker_timeout: float = 30.0,
+        storage=None
     ) -> None:
         self.max_concurrent = max_concurrent
         self.max_depth = max_depth
@@ -73,6 +75,8 @@ class AsyncCrawler:
         self.circuit_breaker_enabled = circuit_breaker_enabled
         self.circuit_breaker_threshold = circuit_breaker_threshold
         self.circuit_breaker_timeout = circuit_breaker_timeout
+
+        self.storage = storage
 
         self.session: Optional[aiohttp.ClientSession] = None
         self.parser = HTMLParser()
@@ -117,6 +121,7 @@ class AsyncCrawler:
         self.robots_blocked_count = 0
         self.total_request_attempts = 0
         self.permanent_error_urls = {}
+        self.storage_errors = []
 
         self.domain_error_counts = {}
         self.domain_open_until = {}
@@ -280,6 +285,7 @@ class AsyncCrawler:
                         url=url,
                         content=text,
                         success=True,
+                        error=None,
                         status_code=response.status
                     )
 
@@ -315,40 +321,50 @@ class AsyncCrawler:
         except PermanentError as error:
             logger.error(f"❌ Постоянная ошибка | url={url} | error={error}")
             self.permanent_error_urls[url] = str(error)
-            return FetchResult(
-                url=url,
-                content=None,
-                success=False,
-                error=str(error)
-            )
+            return FetchResult(url=url, content=None, success=False, error=str(error))
 
         except RobotsBlockedError as error:
             logger.error(f"❌ robots blocked | url={url} | error={error}")
             self.permanent_error_urls[url] = str(error)
-            return FetchResult(
-                url=url,
-                content=None,
-                success=False,
-                error=str(error)
-            )
+            return FetchResult(url=url, content=None, success=False, error=str(error))
 
         except ParseError as error:
             logger.error(f"❌ Ошибка парсинга | url={url} | error={error}")
-            return FetchResult(
-                url=url,
-                content=None,
-                success=False,
-                error=str(error)
-            )
+            return FetchResult(url=url, content=None, success=False, error=str(error))
 
         except Exception as error:
             logger.error(f"❌ Временная/сетевая ошибка после всех повторов | url={url} | error={error}")
-            return FetchResult(
-                url=url,
-                content=None,
-                success=False,
-                error=str(error)
+            return FetchResult(url=url, content=None, success=False, error=str(error))
+
+    def _prepare_storage_record(self, parsed_result: dict) -> dict:
+        return {
+            "url": parsed_result.get("url", ""),
+            "title": parsed_result.get("title", ""),
+            "text": parsed_result.get("text", ""),
+            "links": parsed_result.get("links", []),
+            "metadata": parsed_result.get("metadata", {}),
+            "crawled_at": datetime.now(timezone.utc).isoformat(),
+            "status_code": parsed_result.get("status_code", 200),
+            "content_type": parsed_result.get("content_type", "text/html"),
+        }
+
+    async def _save_result(self, parsed_result: dict) -> None:
+        if self.storage is None:
+            return
+
+        record = self._prepare_storage_record(parsed_result)
+
+        try:
+            await self.storage.save(record)
+        except Exception as error:
+            message = f"{type(error).__name__}: {error}"
+            self.storage_errors.append(
+                {
+                    "url": record.get("url", ""),
+                    "error": message,
+                }
             )
+            logger.error(f"💾 Ошибка сохранения | url={record.get('url', '')} | error={message}")
 
     async def fetch_and_parse(self, url: str) -> dict:
         fetch_result = await self.fetch_url(url)
@@ -365,10 +381,15 @@ class AsyncCrawler:
                 "tables": [],
                 "lists": [],
                 "error": fetch_result.error,
+                "status_code": fetch_result.status_code,
+                "content_type": "",
             }
 
         try:
-            return await self.parser.parse_html(fetch_result.content, url)
+            parsed = await self.parser.parse_html(fetch_result.content, url)
+            parsed["status_code"] = fetch_result.status_code
+            parsed["content_type"] = "text/html"
+            return parsed
         except Exception as error:
             raise ParseError(f"{type(error).__name__}: {error}", url=url)
 
@@ -434,6 +455,8 @@ class AsyncCrawler:
 
         self.processed_urls[url] = parsed_result
         self.queue.mark_processed(url)
+
+        await self._save_result(parsed_result)
 
         if depth >= self.max_depth:
             return
@@ -538,69 +561,112 @@ class AsyncCrawler:
                 domain: until
                 for domain, until in self.domain_open_until.items()
             },
-        }
-
-    def get_politeness_stats(self) -> dict:
-        return {
-            "requests_per_second_config": self.requests_per_second,
-            "average_delay": self._get_average_delay(),
-            "robots_blocked_count": self.robots_blocked_count,
-            "total_request_attempts": self.total_request_attempts,
-            "rate_limiter": self.rate_limiter.get_stats(),
-            "robots_parser": self.robots_parser.get_stats(),
+            "storage_errors_count": len(self.storage_errors),
+            "storage_errors": list(self.storage_errors),
         }
 
     async def close(self) -> None:
+        if self.storage is not None:
+            try:
+                await self.storage.close()
+            except Exception as error:
+                logger.error(f"💾 Ошибка закрытия storage: {type(error).__name__}: {error}")
+
         if self.session is not None and not self.session.closed:
             await self.session.close()
             logger.info("🔒 HTTP-сессия закрыта")
 
 
-async def main() -> None:
+async def demo_json_storage() -> None:
+    storage = JSONStorage("results_day6.json")
     crawler = AsyncCrawler(
         max_concurrent=5,
         max_depth=1,
-        per_domain_limit=2,
         requests_per_second=2.0,
-        respect_robots=True,
-        min_delay=0.3,
-        jitter=0.1,
-        user_agent="MyBot/1.0",
-        max_retries=3,
-        backoff_base=0.5,
-        timeout_connect=3.0,
-        timeout_read=5.0,
-        timeout_total=8.0,
-        circuit_breaker_enabled=True,
-        circuit_breaker_threshold=3,
-        circuit_breaker_timeout=15.0
+        respect_robots=False,
+        storage=storage
     )
 
     try:
         results = await crawler.crawl(
-            start_urls=[
-                "https://example.com",
-                "https://httpbin.org/status/503",
-                "https://httpbin.org/status/404",
-                "https://httpbin.org/status/429",
-            ],
-            max_pages=10,
-            same_domain_only=False,
-            include_patterns=None,
+            start_urls=["https://example.com"],
+            max_pages=5,
+            same_domain_only=True,
             exclude_patterns=["#", "mailto:", "tel:"]
         )
 
-        await save_json_async(results, "crawl_results_day5.json")
-        await save_dict_json_async(crawler.get_error_stats(), "error_report_day5.json")
-
-        print(f"Обработано: {len(results)} страниц")
-        print("Результаты сохранены в crawl_results_day5.json")
-        print("Отчёт об ошибках сохранён в error_report_day5.json")
-        print("Статистика ошибок:")
-        print(crawler.get_error_stats())
-
+        await save_dict_json_async(crawler.get_error_stats(), "error_report_day6_json.json")
+        print(f"JSON demo: сохранено страниц {len(results)}")
     finally:
         await crawler.close()
+
+
+async def demo_csv_storage() -> None:
+    storage = CSVStorage("results_day6.csv")
+    crawler = AsyncCrawler(
+        max_concurrent=5,
+        max_depth=1,
+        requests_per_second=2.0,
+        respect_robots=False,
+        storage=storage
+    )
+
+    try:
+        results = await crawler.crawl(
+            start_urls=["https://example.com"],
+            max_pages=5,
+            same_domain_only=True,
+            exclude_patterns=["#", "mailto:", "tel:"]
+        )
+
+        print(f"CSV demo: сохранено страниц {len(results)}")
+    finally:
+        await crawler.close()
+
+
+async def demo_sqlite_storage() -> None:
+    storage = SQLiteStorage("crawler_day6.db", batch_size=5)
+    crawler = AsyncCrawler(
+        max_concurrent=5,
+        max_depth=1,
+        requests_per_second=2.0,
+        respect_robots=False,
+        storage=storage
+    )
+
+    try:
+        results = await crawler.crawl(
+            start_urls=["https://example.com"],
+            max_pages=5,
+            same_domain_only=True,
+            exclude_patterns=["#", "mailto:", "tel:"]
+        )
+
+        print(f"SQLite demo: сохранено страниц {len(results)}")
+    finally:
+        await crawler.close()
+
+    reader = SQLiteStorage("crawler_day6.db", batch_size=5)
+    try:
+        rows = await reader.read_all()
+        print(f"SQLite demo: прочитано записей {len(rows)}")
+        if rows:
+            print("Пример записи из SQLite:")
+            print(
+                {
+                    "url": rows[0]["url"],
+                    "title": rows[0]["title"],
+                    "status_code": rows[0]["status_code"],
+                }
+            )
+    finally:
+        await reader.close()
+
+
+async def main() -> None:
+    await demo_json_storage()
+    await demo_csv_storage()
+    await demo_sqlite_storage()
 
 
 if __name__ == "__main__":

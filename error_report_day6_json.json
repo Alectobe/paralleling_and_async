@@ -1,0 +1,19 @@
+{
+    "total_request_attempts": 1,
+    "failed_urls_count": 0,
+    "permanent_error_urls_count": 0,
+    "permanent_error_urls": {},
+    "failed_urls": {},
+    "retry_stats": {
+        "total_retries": 0,
+        "successful_retries": 0,
+        "average_retry_delay": 0.0,
+        "errors_by_type": {}
+    },
+    "domain_error_counts": {
+        "example.com": 0
+    },
+    "open_circuits": {},
+    "storage_errors_count": 0,
+    "storage_errors": []
+}
