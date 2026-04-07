@@ -1,0 +1,37 @@
+{
+    "start_urls": [
+        "https://example.com"
+    ],
+    "max_pages": 20,
+    "max_concurrent": 5,
+    "max_depth": 2,
+    "per_domain_limit": 2,
+    "requests_per_second": 2.0,
+    "respect_robots": true,
+    "min_delay": 0.3,
+    "jitter": 0.1,
+    "user_agent": "AdvancedCrawler/7.0",
+    "user_agents": [
+        "AdvancedCrawler/7.0",
+        "Mozilla/5.0 (compatible; DemoBot/1.0)"
+    ],
+    "max_retries": 3,
+    "backoff_base": 0.5,
+    "timeout_connect": 3.0,
+    "timeout_read": 5.0,
+    "timeout_total": 8.0,
+    "circuit_breaker_enabled": true,
+    "circuit_breaker_threshold": 3,
+    "circuit_breaker_timeout": 15.0,
+    "same_domain_only": true,
+    "include_patterns": null,
+    "exclude_patterns": ["#", "mailto:", "tel:"],
+    "use_sitemap": true,
+    "log_file": "crawler.log",
+    "log_level": "INFO",
+    "storage": {
+        "type": "json",
+        "path": "results.json",
+        "batch_size": 10
+    }
+}

@@ -1,0 +1,66 @@
+2026-04-07 20:59:27,054 | INFO | ▶️ Начало загрузки: https://example.com | attempt=1
+2026-04-07 20:59:27,390 | INFO | ✅ Успешно загружено: https://example.com | status=200 | bytes=528
+2026-04-07 20:59:27,392 | INFO | 🔒 HTTP-сессия закрыта
+2026-04-07 20:59:27,398 | INFO | ▶️ Начало загрузки: https://httpbin.org/status/404 | attempt=1
+2026-04-07 20:59:28,302 | ERROR | 🚫 Повтор запрещён | type=PermanentError | attempt=1 | error=HTTP 404: NOT FOUND
+2026-04-07 20:59:28,302 | ERROR | ❌ Постоянная ошибка | url=https://httpbin.org/status/404 | error=HTTP 404: NOT FOUND
+2026-04-07 20:59:28,302 | INFO | 🔒 HTTP-сессия закрыта
+2026-04-07 20:59:28,304 | INFO | ▶️ Начало загрузки: https://example.com | attempt=1
+2026-04-07 20:59:28,579 | INFO | ✅ Успешно загружено: https://example.com | status=200 | bytes=528
+2026-04-07 20:59:28,583 | INFO | 🔒 HTTP-сессия закрыта
+2026-04-07 20:59:28,626 | WARNING | 🚫 URL заблокирован robots.txt: https://example.com/blocked
+2026-04-07 20:59:28,626 | ERROR | 🚫 Повтор запрещён | type=RobotsBlockedError | attempt=1 | error=Blocked by robots.txt
+2026-04-07 20:59:28,626 | ERROR | ❌ Постоянная ошибка | url=https://example.com/blocked | error=Blocked by robots.txt
+2026-04-07 20:59:29,655 | WARNING | 🔄 Повтор запроса | type=TransientError | attempt=1 | next_retry_in=0.01s | error=temporary
+2026-04-07 20:59:29,666 | WARNING | 🔄 Повтор запроса | type=TransientError | attempt=2 | next_retry_in=0.02s | error=temporary
+2026-04-07 20:59:29,690 | ERROR | 🚫 Повтор запрещён | type=PermanentError | attempt=1 | error=404
+2026-04-07 20:59:29,692 | WARNING | 🔄 Повтор запроса | type=TransientError | attempt=1 | next_retry_in=0.05s | error=503
+2026-04-07 20:59:29,744 | WARNING | 🔄 Повтор запроса | type=TransientError | attempt=2 | next_retry_in=0.10s | error=503
+2026-04-07 20:59:29,845 | ERROR | 🚫 Лимит повторов исчерпан | type=TransientError | attempt=3 | error=503
+2026-04-07 20:59:29,848 | WARNING | 🔄 Повтор запроса | type=TransientError | attempt=1 | next_retry_in=0.01s | error=timeout
+2026-04-07 20:59:29,858 | ERROR | 🚫 Лимит повторов исчерпан | type=TransientError | attempt=2 | error=timeout
+2026-04-07 21:01:06,134 | INFO | ▶️ Начало загрузки: https://example.com | attempt=1
+2026-04-07 21:01:06,410 | INFO | ✅ Успешно загружено: https://example.com | status=200 | bytes=528
+2026-04-07 21:01:06,411 | INFO | 🔒 HTTP-сессия закрыта
+2026-04-07 21:01:06,417 | INFO | ▶️ Начало загрузки: https://httpbin.org/status/404 | attempt=1
+2026-04-07 21:01:07,116 | ERROR | 🚫 Повтор запрещён | type=PermanentError | attempt=1 | error=HTTP 404: NOT FOUND
+2026-04-07 21:01:07,117 | ERROR | ❌ Постоянная ошибка | url=https://httpbin.org/status/404 | error=HTTP 404: NOT FOUND
+2026-04-07 21:01:07,118 | INFO | 🔒 HTTP-сессия закрыта
+2026-04-07 21:01:07,123 | INFO | ▶️ Начало загрузки: https://example.com | attempt=1
+2026-04-07 21:01:07,385 | INFO | ✅ Успешно загружено: https://example.com | status=200 | bytes=528
+2026-04-07 21:01:07,394 | INFO | 🔒 HTTP-сессия закрыта
+2026-04-07 21:01:07,444 | WARNING | 🚫 URL заблокирован robots.txt: https://example.com/blocked
+2026-04-07 21:01:07,444 | ERROR | 🚫 Повтор запрещён | type=RobotsBlockedError | attempt=1 | error=Blocked by robots.txt
+2026-04-07 21:01:07,444 | ERROR | ❌ Постоянная ошибка | url=https://example.com/blocked | error=Blocked by robots.txt
+2026-04-07 21:01:08,474 | WARNING | 🔄 Повтор запроса | type=TransientError | attempt=1 | next_retry_in=0.01s | error=temporary
+2026-04-07 21:01:08,485 | WARNING | 🔄 Повтор запроса | type=TransientError | attempt=2 | next_retry_in=0.02s | error=temporary
+2026-04-07 21:01:08,510 | ERROR | 🚫 Повтор запрещён | type=PermanentError | attempt=1 | error=404
+2026-04-07 21:01:08,512 | WARNING | 🔄 Повтор запроса | type=TransientError | attempt=1 | next_retry_in=0.05s | error=503
+2026-04-07 21:01:08,564 | WARNING | 🔄 Повтор запроса | type=TransientError | attempt=2 | next_retry_in=0.10s | error=503
+2026-04-07 21:01:08,666 | ERROR | 🚫 Лимит повторов исчерпан | type=TransientError | attempt=3 | error=503
+2026-04-07 21:01:08,670 | WARNING | 🔄 Повтор запроса | type=TransientError | attempt=1 | next_retry_in=0.01s | error=timeout
+2026-04-07 21:01:08,681 | ERROR | 🚫 Лимит повторов исчерпан | type=TransientError | attempt=2 | error=timeout
+2026-04-07 21:01:12,439 | INFO | ▶️ Начало загрузки: https://example.com | attempt=1
+2026-04-07 21:01:12,706 | INFO | ✅ Успешно загружено: https://example.com | status=200 | bytes=528
+2026-04-07 21:01:12,708 | INFO | 🔒 HTTP-сессия закрыта
+2026-04-07 21:01:12,714 | INFO | ▶️ Начало загрузки: https://httpbin.org/status/404 | attempt=1
+2026-04-07 21:01:13,339 | ERROR | 🚫 Повтор запрещён | type=PermanentError | attempt=1 | error=HTTP 404: NOT FOUND
+2026-04-07 21:01:13,340 | ERROR | ❌ Постоянная ошибка | url=https://httpbin.org/status/404 | error=HTTP 404: NOT FOUND
+2026-04-07 21:01:13,341 | INFO | 🔒 HTTP-сессия закрыта
+2026-04-07 21:01:13,346 | INFO | ▶️ Начало загрузки: https://example.com | attempt=1
+2026-04-07 21:01:13,605 | INFO | ✅ Успешно загружено: https://example.com | status=200 | bytes=528
+2026-04-07 21:01:13,610 | INFO | 🔒 HTTP-сессия закрыта
+2026-04-07 21:01:13,617 | WARNING | 🚫 URL заблокирован robots.txt: https://example.com/blocked
+2026-04-07 21:01:13,617 | ERROR | 🚫 Повтор запрещён | type=RobotsBlockedError | attempt=1 | error=Blocked by robots.txt
+2026-04-07 21:01:13,617 | ERROR | ❌ Постоянная ошибка | url=https://example.com/blocked | error=Blocked by robots.txt
+2026-04-07 21:01:14,654 | WARNING | 🔄 Повтор запроса | type=TransientError | attempt=1 | next_retry_in=0.01s | error=temporary
+2026-04-07 21:01:14,666 | WARNING | 🔄 Повтор запроса | type=TransientError | attempt=2 | next_retry_in=0.02s | error=temporary
+2026-04-07 21:01:14,689 | ERROR | 🚫 Повтор запрещён | type=PermanentError | attempt=1 | error=404
+2026-04-07 21:01:14,690 | WARNING | 🔄 Повтор запроса | type=TransientError | attempt=1 | next_retry_in=0.05s | error=503
+2026-04-07 21:01:14,741 | WARNING | 🔄 Повтор запроса | type=TransientError | attempt=2 | next_retry_in=0.10s | error=503
+2026-04-07 21:01:14,843 | ERROR | 🚫 Лимит повторов исчерпан | type=TransientError | attempt=3 | error=503
+2026-04-07 21:01:14,848 | WARNING | 🔄 Повтор запроса | type=TransientError | attempt=1 | next_retry_in=0.01s | error=timeout
+2026-04-07 21:01:14,860 | ERROR | 🚫 Лимит повторов исчерпан | type=TransientError | attempt=2 | error=timeout
+2026-04-07 21:01:20,111 | INFO | ▶️ Начало загрузки: https://example.com | attempt=1
+2026-04-07 21:01:20,365 | INFO | ✅ Успешно загружено: https://example.com | status=200 | bytes=528
+2026-04-07 21:01:20,373 | INFO | 🔒 HTTP-сессия закрыта
