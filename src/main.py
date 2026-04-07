@@ -1,4 +1,5 @@
 import asyncio
+import random
 import time
 from typing import Optional
 from urllib.parse import urlparse
@@ -8,6 +9,8 @@ import aiohttp
 from src.models import FetchResult
 from src.parser import HTMLParser
 from src.queue_manager import CrawlerQueue
+from src.rate_limiter import RateLimiter
+from src.robots_parser import RobotsParser
 from src.semaphore_manager import SemaphoreManager
 from src.utils import (
     calculate_speed,
@@ -27,10 +30,26 @@ class AsyncCrawler:
         self,
         max_concurrent: int = 10,
         max_depth: int = 2,
-        per_domain_limit: int = 3
+        per_domain_limit: int = 3,
+        requests_per_second: float = 1.0,
+        respect_robots: bool = True,
+        min_delay: float = 0.0,
+        jitter: float = 0.0,
+        user_agent: str = "AsyncCrawler/4.0",
+        user_agents: Optional[list] = None,
+        max_retries: int = 2,
+        backoff_base: float = 0.5
     ) -> None:
         self.max_concurrent = max_concurrent
         self.max_depth = max_depth
+        self.requests_per_second = requests_per_second
+        self.respect_robots = respect_robots
+        self.min_delay = min_delay
+        self.jitter = jitter
+        self.user_agent = user_agent
+        self.user_agents = user_agents or [user_agent]
+        self.max_retries = max_retries
+        self.backoff_base = backoff_base
 
         self.session: Optional[aiohttp.ClientSession] = None
         self.parser = HTMLParser()
@@ -39,17 +58,30 @@ class AsyncCrawler:
             global_limit=max_concurrent,
             per_domain_limit=per_domain_limit
         )
+        self.rate_limiter = RateLimiter(
+            requests_per_second=requests_per_second,
+            per_domain=True
+        )
+        self.robots_parser = RobotsParser()
 
-        self.visited_urls: set[str] = set()
-        self.failed_urls: dict[str, str] = {}
-        self.processed_urls: dict[str, dict] = {}
+        self.visited_urls = set()
+        self.failed_urls = {}
+        self.processed_urls = {}
+
+        self.request_timestamps = []
+        self.delay_history = []
+        self.robots_blocked_count = 0
+        self.total_request_attempts = 0
+
+    def _get_random_user_agent(self) -> str:
+        return random.choice(self.user_agents)
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self.session is None or self.session.closed:
             timeout = aiohttp.ClientTimeout(
-                total=15,
+                total=20,
                 connect=5,
-                sock_read=10
+                sock_read=15
             )
 
             connector = aiohttp.TCPConnector(
@@ -61,70 +93,157 @@ class AsyncCrawler:
             self.session = aiohttp.ClientSession(
                 timeout=timeout,
                 connector=connector,
-                headers={"User-Agent": "AsyncCrawler/3.0"}
+                headers={"User-Agent": self.user_agent}
             )
+            self.robots_parser.set_session(self.session)
 
         return self.session
 
-    async def fetch_url(self, url: str) -> FetchResult:
-        logger.info(f"▶️ Начало загрузки: {url}")
+    def _get_average_delay(self) -> float:
+        if not self.delay_history:
+            return 0.0
+        return sum(self.delay_history) / len(self.delay_history)
 
+    def _get_request_rate(self, start_time: float) -> float:
+        elapsed = time.perf_counter() - start_time
+        if elapsed <= 0:
+            return 0.0
+        return self.total_request_attempts / elapsed
+
+    async def _apply_politeness_rules(self, url: str, current_user_agent: str) -> Optional[str]:
+        domain = get_domain(url)
+
+        if self.respect_robots:
+            await self.robots_parser.fetch_robots(url)
+
+            if not self.robots_parser.can_fetch(url, current_user_agent):
+                self.robots_blocked_count += 1
+                logger.warning(f"🚫 URL заблокирован robots.txt: {url}")
+                return "Blocked by robots.txt"
+
+            robots_delay = self.robots_parser.get_crawl_delay(url, current_user_agent)
+        else:
+            robots_delay = 0.0
+
+        await self.rate_limiter.acquire(domain)
+
+        extra_delay = max(self.min_delay, robots_delay)
+        if self.jitter > 0:
+            extra_delay += random.uniform(0.0, self.jitter)
+
+        if extra_delay > 0:
+            self.delay_history.append(extra_delay)
+            await asyncio.sleep(extra_delay)
+
+        return None
+
+    async def fetch_url(self, url: str) -> FetchResult:
+        current_user_agent = self._get_random_user_agent()
+
+        blocked_reason = await self._apply_politeness_rules(url, current_user_agent)
+        if blocked_reason is not None:
+            return FetchResult(
+                url=url,
+                content=None,
+                success=False,
+                error=blocked_reason
+            )
+
+        await self.semaphore_manager.acquire(url)
         try:
             session = await self._get_session()
 
-            async with session.get(url) as response:
-                response.raise_for_status()
-                text = await response.text()
+            for attempt in range(self.max_retries + 1):
+                self.total_request_attempts += 1
+                self.request_timestamps.append(time.perf_counter())
 
-                logger.info(
-                    f"✅ Успешно загружено: {url} | status={response.status} | bytes={len(text)}"
-                )
+                logger.info(f"▶️ Начало загрузки: {url} | attempt={attempt + 1}")
 
-                return FetchResult(
-                    url=url,
-                    content=text,
-                    success=True,
-                    status_code=response.status
-                )
+                try:
+                    async with session.get(
+                        url,
+                        headers={"User-Agent": current_user_agent}
+                    ) as response:
+                        response.raise_for_status()
+                        text = await response.text()
 
-        except aiohttp.ClientResponseError as error:
-            logger.error(
-                f"🚫 HTTP ошибка для {url} | status={error.status} | message={error.message}"
-            )
+                        logger.info(
+                            f"✅ Успешно загружено: {url} | status={response.status} | bytes={len(text)}"
+                        )
+
+                        return FetchResult(
+                            url=url,
+                            content=text,
+                            success=True,
+                            status_code=response.status
+                        )
+
+                except aiohttp.ClientResponseError as error:
+                    logger.error(
+                        f"🚫 HTTP ошибка для {url} | status={error.status} | message={error.message}"
+                    )
+
+                    retryable = error.status >= 500
+                    if retryable and attempt < self.max_retries:
+                        backoff_delay = self.backoff_base * (2 ** attempt)
+                        await asyncio.sleep(backoff_delay)
+                        continue
+
+                    return FetchResult(
+                        url=url,
+                        content=None,
+                        success=False,
+                        error=f"HTTP error {error.status}: {error.message}",
+                        status_code=error.status
+                    )
+
+                except asyncio.TimeoutError:
+                    logger.error(f"⏰ Таймаут при загрузке: {url}")
+
+                    if attempt < self.max_retries:
+                        backoff_delay = self.backoff_base * (2 ** attempt)
+                        await asyncio.sleep(backoff_delay)
+                        continue
+
+                    return FetchResult(
+                        url=url,
+                        content=None,
+                        success=False,
+                        error="Timeout error"
+                    )
+
+                except aiohttp.ClientError as error:
+                    logger.error(f"❌ Сетевая ошибка для {url} | {type(error).__name__}: {error}")
+
+                    if attempt < self.max_retries:
+                        backoff_delay = self.backoff_base * (2 ** attempt)
+                        await asyncio.sleep(backoff_delay)
+                        continue
+
+                    return FetchResult(
+                        url=url,
+                        content=None,
+                        success=False,
+                        error=f"Client error: {type(error).__name__}: {error}"
+                    )
+
+                except Exception as error:
+                    logger.error(f"⚠️ Неожиданная ошибка для {url} | {type(error).__name__}: {error}")
+                    return FetchResult(
+                        url=url,
+                        content=None,
+                        success=False,
+                        error=f"Unexpected error: {type(error).__name__}: {error}"
+                    )
+
             return FetchResult(
                 url=url,
                 content=None,
                 success=False,
-                error=f"HTTP error {error.status}: {error.message}",
-                status_code=error.status
+                error="Unknown fetch error"
             )
-
-        except asyncio.TimeoutError:
-            logger.error(f"⏰ Таймаут при загрузке: {url}")
-            return FetchResult(
-                url=url,
-                content=None,
-                success=False,
-                error="Timeout error"
-            )
-
-        except aiohttp.ClientError as error:
-            logger.error(f"❌ Сетевая ошибка для {url} | {type(error).__name__}: {error}")
-            return FetchResult(
-                url=url,
-                content=None,
-                success=False,
-                error=f"Client error: {type(error).__name__}: {error}"
-            )
-
-        except Exception as error:
-            logger.error(f"⚠️ Неожиданная ошибка для {url} | {type(error).__name__}: {error}")
-            return FetchResult(
-                url=url,
-                content=None,
-                success=False,
-                error=f"Unexpected error: {type(error).__name__}: {error}"
-            )
+        finally:
+            await self.semaphore_manager.release(url)
 
     async def fetch_and_parse(self, url: str) -> dict:
         fetch_result = await self.fetch_url(url)
@@ -150,8 +269,8 @@ class AsyncCrawler:
         url: str,
         source_domain: str,
         same_domain_only: bool,
-        include_patterns: Optional[list[str]],
-        exclude_patterns: Optional[list[str]]
+        include_patterns: Optional[list],
+        exclude_patterns: Optional[list]
     ) -> bool:
         normalized_url = normalize_url(url)
 
@@ -183,10 +302,10 @@ class AsyncCrawler:
         self,
         item,
         max_pages: int,
-        source_domains: set[str],
+        source_domains: set,
         same_domain_only: bool,
-        include_patterns: Optional[list[str]],
-        exclude_patterns: Optional[list[str]]
+        include_patterns: Optional[list],
+        exclude_patterns: Optional[list]
     ) -> None:
         url = item.url
         depth = item.depth
@@ -199,45 +318,41 @@ class AsyncCrawler:
 
         self.visited_urls.add(url)
 
-        await self.semaphore_manager.acquire(url)
-        try:
-            parsed_result = await self.fetch_and_parse(url)
+        parsed_result = await self.fetch_and_parse(url)
 
-            if parsed_result.get("error"):
-                self.failed_urls[url] = parsed_result["error"]
-                self.queue.mark_failed(url, parsed_result["error"])
-                return
+        if parsed_result.get("error"):
+            self.failed_urls[url] = parsed_result["error"]
+            self.queue.mark_failed(url, parsed_result["error"])
+            return
 
-            self.processed_urls[url] = parsed_result
-            self.queue.mark_processed(url)
+        self.processed_urls[url] = parsed_result
+        self.queue.mark_processed(url)
 
-            if depth >= self.max_depth:
-                return
+        if depth >= self.max_depth:
+            return
 
-            for link in parsed_result.get("links", []):
-                for source_domain in source_domains:
-                    if self._should_visit_url(
-                        url=link,
-                        source_domain=source_domain,
-                        same_domain_only=same_domain_only,
-                        include_patterns=include_patterns,
-                        exclude_patterns=exclude_patterns
-                    ):
-                        self.queue.add_url(link, priority=depth + 1, depth=depth + 1)
-                        break
-
-        finally:
-            await self.semaphore_manager.release(url)
+        for link in parsed_result.get("links", []):
+            for source_domain in source_domains:
+                if self._should_visit_url(
+                    url=link,
+                    source_domain=source_domain,
+                    same_domain_only=same_domain_only,
+                    include_patterns=include_patterns,
+                    exclude_patterns=exclude_patterns
+                ):
+                    self.queue.add_url(link, priority=depth + 1, depth=depth + 1)
+                    break
 
     async def crawl(
         self,
-        start_urls: list[str],
+        start_urls: list,
         max_pages: int = 100,
         same_domain_only: bool = True,
-        include_patterns: Optional[list[str]] = None,
-        exclude_patterns: Optional[list[str]] = None
-    ) -> list[dict]:
+        include_patterns: Optional[list] = None,
+        exclude_patterns: Optional[list] = None
+    ) -> list:
         start_time = time.perf_counter()
+        await self._get_session()
 
         source_domains = {get_domain(url) for url in start_urls}
 
@@ -284,17 +399,32 @@ class AsyncCrawler:
             speed = calculate_speed(start_time, len(self.processed_urls))
             queue_stats = self.queue.get_stats()
             semaphore_stats = self.semaphore_manager.get_stats()
+            request_rate = self._get_request_rate(start_time)
+            average_delay = self._get_average_delay()
 
             print_crawl_progress(
                 processed=len(self.processed_urls),
                 queued=queue_stats["queued"],
                 failed=len(self.failed_urls),
                 active=semaphore_stats["active_tasks"],
-                speed=speed
+                speed=speed,
+                request_rate=request_rate,
+                avg_delay=average_delay,
+                robots_blocked=self.robots_blocked_count
             )
 
         print()
         return list(self.processed_urls.values())
+
+    def get_politeness_stats(self) -> dict:
+        return {
+            "requests_per_second_config": self.requests_per_second,
+            "average_delay": self._get_average_delay(),
+            "robots_blocked_count": self.robots_blocked_count,
+            "total_request_attempts": self.total_request_attempts,
+            "rate_limiter": self.rate_limiter.get_stats(),
+            "robots_parser": self.robots_parser.get_stats(),
+        }
 
     async def close(self) -> None:
         if self.session is not None and not self.session.closed:
@@ -303,7 +433,16 @@ class AsyncCrawler:
 
 
 async def main() -> None:
-    crawler = AsyncCrawler(max_concurrent=10, max_depth=2)
+    crawler = AsyncCrawler(
+        max_concurrent=5,
+        max_depth=2,
+        per_domain_limit=2,
+        requests_per_second=2.0,
+        respect_robots=True,
+        min_delay=0.5,
+        jitter=0.2,
+        user_agent="MyBot/1.0"
+    )
 
     try:
         results = await crawler.crawl(
@@ -311,12 +450,15 @@ async def main() -> None:
             max_pages=20,
             same_domain_only=True,
             include_patterns=None,
-            exclude_patterns=["#"]
+            exclude_patterns=["#", "mailto:", "tel:"]
         )
 
-        await save_json_async(results, "crawl_results_day3.json")
+        await save_json_async(results, "crawl_results_day4.json")
+
         print(f"Обработано: {len(results)} страниц")
-        print("Результаты сохранены в crawl_results_day3.json")
+        print("Результаты сохранены в crawl_results_day4.json")
+        print("Статистика вежливости:")
+        print(crawler.get_politeness_stats())
 
     finally:
         await crawler.close()

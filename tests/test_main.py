@@ -5,7 +5,7 @@ from src.main import AsyncCrawler
 
 @pytest.mark.asyncio
 async def test_valid_url():
-    crawler = AsyncCrawler(max_concurrent=2)
+    crawler = AsyncCrawler(max_concurrent=2, respect_robots=False)
 
     try:
         result = await crawler.fetch_url("https://example.com")
@@ -18,7 +18,7 @@ async def test_valid_url():
 
 @pytest.mark.asyncio
 async def test_404_url():
-    crawler = AsyncCrawler(max_concurrent=2)
+    crawler = AsyncCrawler(max_concurrent=2, respect_robots=False)
 
     try:
         result = await crawler.fetch_url("https://httpbin.org/status/404")
@@ -31,7 +31,7 @@ async def test_404_url():
 
 @pytest.mark.asyncio
 async def test_fetch_and_parse():
-    crawler = AsyncCrawler(max_concurrent=2)
+    crawler = AsyncCrawler(max_concurrent=2, respect_robots=False)
 
     try:
         result = await crawler.fetch_and_parse("https://example.com")
@@ -45,7 +45,7 @@ async def test_fetch_and_parse():
 
 
 def test_should_visit_url_same_domain():
-    crawler = AsyncCrawler(max_concurrent=2, max_depth=2)
+    crawler = AsyncCrawler(max_concurrent=2, max_depth=2, respect_robots=False)
 
     result = crawler._should_visit_url(
         url="https://example.com/page",
@@ -59,7 +59,7 @@ def test_should_visit_url_same_domain():
 
 
 def test_should_visit_url_other_domain_blocked():
-    crawler = AsyncCrawler(max_concurrent=2, max_depth=2)
+    crawler = AsyncCrawler(max_concurrent=2, max_depth=2, respect_robots=False)
 
     result = crawler._should_visit_url(
         url="https://other.com/page",
@@ -73,7 +73,7 @@ def test_should_visit_url_other_domain_blocked():
 
 
 def test_should_visit_url_include_pattern():
-    crawler = AsyncCrawler(max_concurrent=2, max_depth=2)
+    crawler = AsyncCrawler(max_concurrent=2, max_depth=2, respect_robots=False)
 
     result = crawler._should_visit_url(
         url="https://example.com/blog/post-1",
@@ -87,7 +87,7 @@ def test_should_visit_url_include_pattern():
 
 
 def test_should_visit_url_exclude_pattern():
-    crawler = AsyncCrawler(max_concurrent=2, max_depth=2)
+    crawler = AsyncCrawler(max_concurrent=2, max_depth=2, respect_robots=False)
 
     result = crawler._should_visit_url(
         url="https://example.com/logout",
@@ -98,3 +98,22 @@ def test_should_visit_url_exclude_pattern():
     )
 
     assert result is False
+
+
+@pytest.mark.asyncio
+async def test_robots_blocked_url(monkeypatch):
+    crawler = AsyncCrawler(max_concurrent=2, respect_robots=True)
+
+    async def fake_fetch_robots(url):
+        return {}
+
+    monkeypatch.setattr(crawler.robots_parser, "fetch_robots", fake_fetch_robots)
+    monkeypatch.setattr(crawler.robots_parser, "can_fetch", lambda url, ua="*": False)
+    monkeypatch.setattr(crawler.robots_parser, "get_crawl_delay", lambda url, ua="*": 0.0)
+
+    try:
+        result = await crawler.fetch_url("https://example.com/blocked")
+        assert result.success is False
+        assert result.error == "Blocked by robots.txt"
+    finally:
+        await crawler.close()

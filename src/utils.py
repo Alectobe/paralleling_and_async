@@ -28,7 +28,7 @@ def print_results(results: Iterable[FetchResult]) -> None:
             print(f"      Ошибка: {result.error}")
 
 
-def print_parsed_summary(parsed_pages: list[dict]) -> None:
+def print_parsed_summary(parsed_pages: list) -> None:
     print("\nРезультаты парсинга:")
     for page in parsed_pages:
         print(
@@ -41,18 +41,13 @@ def print_parsed_summary(parsed_pages: list[dict]) -> None:
         )
 
 
-async def save_json_async(data: list[dict], file_path: str) -> None:
+async def save_json_async(data: list, file_path: str) -> None:
     async with aiofiles.open(file_path, "w", encoding="utf-8") as file:
         json_text = json.dumps(data, ensure_ascii=False, indent=4)
         await file.write(json_text)
 
 
 def normalize_url(url: str) -> str:
-    """
-    Упрощённая нормализация URL:
-    - убираем завершающий /
-    - сохраняем схему, домен, путь и query
-    """
     parsed = urlparse(url)
     path = parsed.path.rstrip("/")
     normalized = f"{parsed.scheme}://{parsed.netloc}{path}"
@@ -79,14 +74,20 @@ def print_crawl_progress(
     queued: int,
     failed: int,
     active: int,
-    speed: float
+    speed: float,
+    request_rate: float,
+    avg_delay: float,
+    robots_blocked: int
 ) -> None:
     print(
         f"\rОбработано: {processed} | "
         f"В очереди: {queued} | "
         f"Ошибок: {failed} | "
         f"Активных: {active} | "
-        f"Скорость: {speed:.2f} стр/сек",
+        f"Скорость страниц: {speed:.2f} стр/сек | "
+        f"Скорость запросов: {request_rate:.2f} req/сек | "
+        f"Средняя задержка: {avg_delay:.2f} сек | "
+        f"robots blocked: {robots_blocked}",
         end="",
         flush=True
     )
