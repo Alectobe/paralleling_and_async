@@ -295,18 +295,18 @@ class AdvancedCrawler:
 
     def _classify_http_error(self, status: int, url: str, message: str) -> Exception:
         if status in (401, 403, 404):
-            return PermanentError(f"HTTP {status}: {message}", url=url)
+            return PermanentError(f"HTTP {status}: {message}", url=url, status_code=status)
 
         if status in (429, 500, 502, 503, 504):
-            return TransientError(f"HTTP {status}: {message}", url=url)
+            return TransientError(f"HTTP {status}: {message}", url=url, status_code=status)
 
         if 400 <= status < 500:
-            return PermanentError(f"HTTP {status}: {message}", url=url)
+            return PermanentError(f"HTTP {status}: {message}", url=url, status_code=status)
 
         if status >= 500:
-            return TransientError(f"HTTP {status}: {message}", url=url)
+            return TransientError(f"HTTP {status}: {message}", url=url, status_code=status)
 
-        return TransientError(f"HTTP {status}: {message}", url=url)
+        return TransientError(f"HTTP {status}: {message}", url=url, status_code=status)
 
     async def _apply_politeness_rules(self, url: str, current_user_agent: str) -> None:
         domain = get_domain(url)
@@ -340,11 +340,11 @@ class AdvancedCrawler:
         current_user_agent = self._get_random_user_agent()
         domain = get_domain(url)
 
+        session = await self._get_session()
         await self._apply_politeness_rules(url, current_user_agent)
         await self.semaphore_manager.acquire(url)
 
         try:
-            session = await self._get_session()
             timeout = self._get_timeout_for_attempt(attempt)
 
             self.total_request_attempts += 1
@@ -409,29 +409,24 @@ class AdvancedCrawler:
 
         try:
             result = await self.retry_strategy.execute_with_retry(wrapped_fetch)
-            self.stats.record_page(url, True, result.status_code)
             return result
 
         except PermanentError as error:
             logger.error(f"❌ Постоянная ошибка | url={url} | error={error}")
             self.permanent_error_urls[url] = str(error)
-            self.stats.record_page(url, False, None)
-            return FetchResult(url=url, content=None, success=False, error=str(error))
+            return FetchResult(url=url, content=None, success=False, error=str(error), status_code=error.status_code)
 
         except RobotsBlockedError as error:
             logger.error(f"❌ robots blocked | url={url} | error={error}")
             self.permanent_error_urls[url] = str(error)
-            self.stats.record_page(url, False, None)
             return FetchResult(url=url, content=None, success=False, error=str(error))
 
         except ParseError as error:
             logger.error(f"❌ Ошибка парсинга | url={url} | error={error}")
-            self.stats.record_page(url, False, None)
             return FetchResult(url=url, content=None, success=False, error=str(error))
 
         except Exception as error:
             logger.error(f"❌ Временная/сетевая ошибка после всех повторов | url={url} | error={error}")
-            self.stats.record_page(url, False, None)
             return FetchResult(url=url, content=None, success=False, error=str(error))
 
     async def fetch_and_parse(self, url: str) -> dict:
@@ -549,10 +544,12 @@ class AdvancedCrawler:
         if parsed_result.get("error"):
             self.failed_urls[url] = parsed_result["error"]
             self.queue.mark_failed(url, parsed_result["error"])
+            self.stats.record_page(url, False, parsed_result.get("status_code"))
             return
 
         self.processed_urls[url] = parsed_result
         self.queue.mark_processed(url)
+        self.stats.record_page(url, True, parsed_result.get("status_code"))
 
         await self._save_result(parsed_result)
 

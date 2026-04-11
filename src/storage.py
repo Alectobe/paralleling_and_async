@@ -1,4 +1,5 @@
 import abc
+import asyncio
 import csv
 import io
 import json
@@ -29,7 +30,7 @@ class JSONStorage(DataStorage):
         self.encoding = encoding
         self._initialized = False
         self._first_item = True
-        self._lock = aiofiles.threadpool.sync_open
+        self._lock = asyncio.Lock()
 
     async def _ensure_initialized(self) -> None:
         if self._initialized:
@@ -42,22 +43,24 @@ class JSONStorage(DataStorage):
         self._first_item = True
 
     async def save(self, data: dict) -> None:
-        await self._ensure_initialized()
+        async with self._lock:
+            await self._ensure_initialized()
 
-        json_text = json.dumps(data, ensure_ascii=False, indent=4)
+            json_text = json.dumps(data, ensure_ascii=False, indent=4)
 
-        async with aiofiles.open(self.file_path, "a", encoding=self.encoding) as file:
-            if not self._first_item:
-                await file.write(",\n")
-            await file.write(json_text)
-            self._first_item = False
+            async with aiofiles.open(self.file_path, "a", encoding=self.encoding) as file:
+                if not self._first_item:
+                    await file.write(",\n")
+                await file.write(json_text)
+                self._first_item = False
 
     async def close(self) -> None:
-        if not self._initialized:
-            return
+        async with self._lock:
+            if not self._initialized:
+                return
 
-        async with aiofiles.open(self.file_path, "a", encoding=self.encoding) as file:
-            await file.write("\n]\n")
+            async with aiofiles.open(self.file_path, "a", encoding=self.encoding) as file:
+                await file.write("\n]\n")
 
 
 class CSVStorage(DataStorage):
@@ -66,6 +69,7 @@ class CSVStorage(DataStorage):
         self.encoding = encoding
         self._initialized = False
         self._headers = None
+        self._lock = asyncio.Lock()
 
     def _flatten_data(self, data: dict) -> dict:
         flattened = {}
@@ -95,20 +99,21 @@ class CSVStorage(DataStorage):
         self._initialized = True
 
     async def save(self, data: dict) -> None:
-        await self._ensure_initialized(data)
+        async with self._lock:
+            await self._ensure_initialized(data)
 
-        flattened = self._flatten_data(data)
+            flattened = self._flatten_data(data)
 
-        for header in self._headers:
-            if header not in flattened:
-                flattened[header] = ""
+            for header in self._headers:
+                if header not in flattened:
+                    flattened[header] = ""
 
-        row_buffer = io.StringIO()
-        writer = csv.DictWriter(row_buffer, fieldnames=self._headers)
-        writer.writerow(flattened)
+            row_buffer = io.StringIO()
+            writer = csv.DictWriter(row_buffer, fieldnames=self._headers)
+            writer.writerow(flattened)
 
-        async with aiofiles.open(self.file_path, "a", encoding=self.encoding, newline="") as file:
-            await file.write(row_buffer.getvalue())
+            async with aiofiles.open(self.file_path, "a", encoding=self.encoding, newline="") as file:
+                await file.write(row_buffer.getvalue())
 
     async def close(self) -> None:
         return
@@ -121,6 +126,7 @@ class SQLiteStorage(DataStorage):
         self.connection: Optional[aiosqlite.Connection] = None
         self.buffer = []
         self._initialized = False
+        self._lock = asyncio.Lock()
 
     async def init_db(self) -> None:
         if self._initialized:
@@ -185,13 +191,14 @@ class SQLiteStorage(DataStorage):
         self.buffer.clear()
 
     async def save(self, data: dict) -> None:
-        await self.init_db()
+        async with self._lock:
+            await self.init_db()
 
-        row = self._serialize_row(data)
-        self.buffer.append(row)
+            row = self._serialize_row(data)
+            self.buffer.append(row)
 
-        if len(self.buffer) >= self.batch_size:
-            await self._flush()
+            if len(self.buffer) >= self.batch_size:
+                await self._flush()
 
     async def read_all(self) -> list:
         await self.init_db()
@@ -224,9 +231,10 @@ class SQLiteStorage(DataStorage):
         return result
 
     async def close(self) -> None:
-        if self.connection is None:
-            return
+        async with self._lock:
+            if self.connection is None:
+                return
 
-        await self._flush()
-        await self.connection.close()
-        self.connection = None
+            await self._flush()
+            await self.connection.close()
+            self.connection = None
