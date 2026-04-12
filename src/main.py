@@ -411,15 +411,15 @@ class AdvancedCrawler:
             result = await self.retry_strategy.execute_with_retry(wrapped_fetch)
             return result
 
-        except PermanentError as error:
-            logger.error(f"❌ Постоянная ошибка | url={url} | error={error}")
-            self.permanent_error_urls[url] = str(error)
-            return FetchResult(url=url, content=None, success=False, error=str(error), status_code=error.status_code)
-
         except RobotsBlockedError as error:
             logger.error(f"❌ robots blocked | url={url} | error={error}")
             self.permanent_error_urls[url] = str(error)
             return FetchResult(url=url, content=None, success=False, error=str(error))
+
+        except PermanentError as error:
+            logger.error(f"❌ Постоянная ошибка | url={url} | error={error}")
+            self.permanent_error_urls[url] = str(error)
+            return FetchResult(url=url, content=None, success=False, error=str(error), status_code=error.status_code)
 
         except ParseError as error:
             logger.error(f"❌ Ошибка парсинга | url={url} | error={error}")
@@ -428,6 +428,15 @@ class AdvancedCrawler:
         except Exception as error:
             logger.error(f"❌ Временная/сетевая ошибка после всех повторов | url={url} | error={error}")
             return FetchResult(url=url, content=None, success=False, error=str(error))
+
+    async def fetch_urls(self, urls: list[str]) -> dict[str, FetchResult]:
+        await self._get_session()
+        tasks = {url: self.fetch_url(url) for url in urls}
+        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+        return {
+            url: (result if isinstance(result, FetchResult) else FetchResult(url=url, content=None, success=False, error=str(result)))
+            for url, result in zip(tasks.keys(), results)
+        }
 
     async def fetch_and_parse(self, url: str) -> dict:
         fetch_result = await self.fetch_url(url)
@@ -571,7 +580,12 @@ class AdvancedCrawler:
             for sitemap_url in urls_from_sitemap:
                 self.queue.add_url(sitemap_url, priority=0, depth=0)
 
-    async def crawl(self) -> list:
+    async def crawl(self, start_urls: Optional[list] = None, max_pages: Optional[int] = None) -> list:
+        if start_urls is not None:
+            self.start_urls = start_urls
+        if max_pages is not None:
+            self.max_pages = max_pages
+
         await self._get_session()
         self.stats.start()
 
@@ -609,7 +623,7 @@ class AdvancedCrawler:
                 if not batch:
                     break
 
-                await asyncio.gather(*batch)
+                await asyncio.gather(*batch, return_exceptions=True)
 
                 speed = calculate_speed(self.stats.started_at if self.stats.started_at else time.perf_counter(), len(self.processed_urls))
                 queue_stats = self.queue.get_stats()
